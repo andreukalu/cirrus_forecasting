@@ -35,6 +35,7 @@ from scipy import stats
 
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning) 
+warnings.simplefilter(action='ignore', category=pd.errors.SettingWithCopyWarning)
 
 # Function to calculate Sen's slope
 def sens_slope(x, y, time_target='year'):
