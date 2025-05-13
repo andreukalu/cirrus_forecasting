@@ -1,5 +1,4 @@
 from utilities import *   
-from find_model import FindModel  
 
 def main():
 
@@ -7,22 +6,23 @@ def main():
     predict_param = 'TOA'
     hyper_parameter_tuning_flag = True
 
-    find_model = FindModel(model_type = model_type, predict_param = predict_param, hyper_parameter_tuning = hyper_parameter_tuning_flag)
+    # LOAD AND PRE-PROCESS THE DATASET
+    data_processor = DataProcessor(predict_param = predict_param)
 
-    df_train, df_val = find_model.load_data(train_dataframe_filename = 'df_merged', val_dataframe_filename = 'df_merged_val')
+    df_train = data_processor.load_data(file_path = 'df_merged')
+    df_val = data_processor.load_data(file_path = 'df_merged_val')
 
-    X_train, X_val, y_train, y_val = find_model.data_filtering_and_feature_engineering(df_train, df_val)
+    X_train, y_train = data_processor.data_filtering_and_feature_engineering(df_train)
+    X_val, y_val = data_processor.data_filtering_and_feature_engineering(df_val)
 
-    find_model.instantiate_model()
+    # FIND/FIT/VALIDATE THE ML MODEL
+    model = ForecastModel(predict_param = predict_param, model_type = model_type, hyper_parameter_tuning = hyper_parameter_tuning_flag)
 
-    if hyper_parameter_tuning_flag == True:
-        find_model.define_hyper_parameter_tuning()
+    model.fit(X_train, y_train)
 
-    find_model.model_fit(X_train, y_train)
+    model.validate(X_val, y_val)
 
-    find_model.model_validate(X_val, y_val)
-
-    find_model.save_model()
+    model.save()
 
 if __name__ == "__main__":
     main()

@@ -1,25 +1,14 @@
 #IMPORTS DEFINED IN UTILITIES
 from utilities import *
+from residual_corrector import ResidualCorrector
 
-class FindModel:
+class ForecastModel:
 #### CLASS INITIALIZATION PARAMETERS ###############################################################################################
-    def __init__(self, model_type, predict_param, pca_flag = False, weights_flag = False, hyper_parameter_tuning = False, shift_flag = False, cols = []):
+    def __init__(self, predict_param, model_type = 'Residual', weights_flag = False, hyper_parameter_tuning = False):
 
         self.model_type = model_type                    # Model archietcture to be fitted
-        self.predict_param = predict_param              # Parameter to be forecasted. 
-                                                        # 'TOA': Top of the atmosphere
-                                                        # 'SFC': Surface
-                                                        # 'DIF': Difference between TOA and SFC
-
-        self.cols = cols                                # Specific columns of the dataset to be used. If [], use the whole dataset
-
-        self.datapath = '../02Data'                     # Path of the data to be used for train and validation
-
-        self.pca_flag = pca_flag                        # Flag for principal component analysis (PCA)
-        self.pca_params = 30                            # How many parameters to use in the PCA
         self.weights_flag = weights_flag                # Flag for using training weights
         self.find_model = hyper_parameter_tuning        # Flag for hyper-parameter tuning
-        self.shift_flag = shift_flag                    # Flag for using moving window feature engineering
 
         self.model = None                               # ML model to be fitted
         self.hyper_parameter_search_model = None        # Hyper-parameter tuning object
@@ -28,96 +17,8 @@ class FindModel:
 
 ##### CLASS METHODS ###############################################################################################################
 
-    # LOAD THE DATA 
-    def load_data(self, train_dataframe_filename = 'df_merged', val_dataframe_filename = 'df_merged_val'):
-        # Load the historical data (from 2003 to 2013) for training
-        path = os.path.join(self.datapath,'df_merged')
-        df_train = pd.read_pickle(path).dropna(axis=1)
-
-        # Load the historical data (from 2013 to 2023) for validation
-        path = os.path.join(self.datapath,'df_merged_val')
-        df_val = pd.read_pickle(path).dropna(axis=1)
-
-        return df_train, df_val
-    
-    # Data filtering and Feature Engineering on the train and validation sets
-    def data_filtering_and_feature_engineering(self, df_train, df_val):
-        # TRAIN SET:
-        df_train = df_train[df_train['COUNT']>100]
-        df_train.loc[:,'year'] = df_train.apply(lambda x: x['time'].year + x['time'].month/12, axis=1)
-        df_train.loc[:,'month_sin'] = df_train.apply(lambda x: np.sin(x['time'].month*2*np.pi/12), axis=1)
-        df_train.loc[:,'month_cos'] = df_train.apply(lambda x: np.cos(x['time'].month*2*np.pi/12), axis=1)
-
-        # VALIDATION SET:
-        df_val = df_val[df_val['COUNT']>100]
-        df_val.loc[:,'year'] = df_val.apply(lambda x: x['time'].year, axis=1)
-        df_val.loc[:,'month_sin'] = df_val.apply(lambda x: np.sin(x['time'].month*2*np.pi/12), axis=1)
-        df_val.loc[:,'month_cos'] = df_val.apply(lambda x: np.cos(x['time'].month*2*np.pi/12), axis=1)
-
-        # If past data is to be used, apply window feature engineering
-        if self.shift_flag == True:
-        # TRAINING SET:
-            shifted = df_train.iloc[:, 8:].diff().rolling(window=12).mean()
-            shifted.columns = [f"{col}_next" for col in shifted.columns]
-            df_train = pd.concat([df_train,shifted],axis=1).dropna()
-            shifted = df_train.iloc[:, 8:].rolling(window=12).mean()
-            shifted.columns = [f"{col}_next" for col in shifted.columns]
-            df_train = pd.concat([df_train,shifted],axis=1).dropna()
-            
-        # VALIDATION SET:
-            shifted = df_val.iloc[:, 8:].diff().rolling(window=12).mean()
-            shifted.columns = [f"{col}_next" for col in shifted.columns]
-            df_val = pd.concat([df_val,shifted],axis=1).dropna()
-            shifted = df_val.iloc[:, 8:].rolling(window=12).mean()
-            shifted.columns = [f"{col}_next" for col in shifted.columns]
-            df_val = pd.concat([df_val,shifted],axis=1).dropna()
-
-        # Get the target measurement parameter
-        # Top of the Atmosphere
-        if self.predict_param == 'TOA':  
-            y_train = df_train[['TOA20sr8CASR','TOA30sr8CASR']].mean(axis=1)
-            y_val = df_val[['TOA20sr8CASR','TOA30sr8CASR']].mean(axis=1)
-
-        # Surface
-        elif self.predict_param == 'SFC':
-            y_train = df_train[['SFC20sr8CASR','SFC30sr8CASR']].mean(axis=1)
-            y_val = df_val[['SFC20sr8CASR','SFC30sr8CASR']].mean(axis=1)
-
-        # Difference between TOA and SFC
-        elif self.predict_param == 'DIF':
-            y_train = df_train[['TOA20sr8CASR','TOA30sr8CASR']].mean(axis=1)-df_train[['SFC20sr8CASR','SFC30sr8CASR']].mean(axis=1)
-            y_val = df_val[['TOA20sr8CASR','TOA30sr8CASR']].mean(axis=1)-df_val[['SFC20sr8CASR','SFC30sr8CASR']].mean(axis=1)
-            self.cols = ['rh12', 'rh13', 'rh14', 'ps', 't4', 't9', 't12', 't19', 'albedo']
-
-        # Remove the non-used and target columns
-        if len(self.cols)>0:
-            X_train = df_train[self.cols]
-            X_val = df_val[self.cols]
-        else:
-            X_train = df_train.iloc[:,8:]
-            X_val = df_val.iloc[:,8:]
-
-        # Apply PCA if required
-        if self.pca_flag == True:
-        # Standarize the data
-            scaler = StandardScaler()
-            X_train = scaler.fit_transform(X_train)
-            X_val = scaler.transform(X_val)
-
-        # Apply PCA
-            pca = PCA(n_components='mle')
-            X_train = pca.fit_transform(X_train)
-            X_val = pca.transform(X_val)
-            
-            with open('pca.pkl', 'wb') as f:
-                pickle.dump(pca, f)
-                print('SAVED PCA SUCCESSFULLY')
-
-        # Return the data
-        return X_train, X_val, y_train, y_val 
-
     # DEFINE THE FORECASTING MODELS
-    def instantiate_model(self): 
+    def instantiate(self): 
         if self.model_type == 'LinearRegression':
             self.model = LinearRegression()
         elif self.model_type == 'RandomForest':
@@ -145,7 +46,7 @@ class FindModel:
             base = Ridge(alpha=1.0)
             residual = RandomForestRegressor()
             residual = GradientBoostingRegressor()
-            
+            print(ResidualCorrector(base_model=base, residual_model=residual))
             self.model = Pipeline([('scaler',StandardScaler()),('residual_model',ResidualCorrector(base_model=base, residual_model=residual))])
 
     # HYPERPARAMETER TUNING ON THE DEFINED MODELS
@@ -194,8 +95,9 @@ class FindModel:
         self.hyper_parameter_search_model = GridSearchCV(self.model, param_grid, cv=cv, verbose = 3, scoring='neg_mean_squared_error', n_jobs=-1)
 
     # MODEL FITTING OR HYPERPARAMETER TUNING
-    def model_fit(self, X_train, y_train, weights= None):
-        print(self.find_model)
+    def fit(self, X_train, y_train, weights= None):
+        
+        self.instantiate()
         # Fit the model
         if self.find_model == False:
             if (self.model_type == 'GradientBoosting') | (self.model_type == 'RandomForest'): 
@@ -203,34 +105,37 @@ class FindModel:
             else:
                 self.model = self.model.fit(X_train, y_train)
         else:
+            self.define_hyper_parameter_tuning()
+            
             self.hyper_parameter_search_model = self.hyper_parameter_search_model.fit(X_train, y_train)
         # Print the best parameters and best score
-            print("Best parameters:", self.hyper_parameter_search_model.best_params_)
-            print("Best cross-validation accuracy:", self.hyper_parameter_search_model.best_score_)
+            print("Best parameters: ", self.hyper_parameter_search_model.best_params_)
+            print("Best cross-validation accuracy: ", self.hyper_parameter_search_model.best_score_)
             
         # Store the best-found model
             self.model = self.hyper_parameter_search_model.best_estimator_
 
     # VALIDATE THE MODEL WITH THE VAL DATASET
-    def model_validate(self, X_val, y_val):
+    def validate(self, X_val, y_val):
         y_pred = self.model.predict(X_val)
         y_pred = np.array(y_pred)
         y_val = np.array(y_val)
 
+        print('Validation data set results:')
         print('R2=' + str(round(np.corrcoef(y_pred,y_val)[0,1]**2,2)))
         print('RMSE=' + str(np.sqrt(np.sum((y_pred-y_val)**2)/len(y_pred))))
 
         return y_pred
 
     # SAVE THE FITTED MODEL AS PICKLE
-    def save_model(self):
+    def save(self):
 
         with open(self.model_name,'wb') as f:
             pickle.dump(self.model,f)
             print('model saved')
     
     # SAVE THE FITTED MODEL AS PICKLE
-    def load_model(self):
+    def load(self):
 
         with open(self.model_name, 'rb') as f:
             self.model = pickle.load(f)
