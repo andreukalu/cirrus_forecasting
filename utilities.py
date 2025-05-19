@@ -24,17 +24,17 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.neighbors import KNeighborsRegressor
-from sklearn.metrics import mean_squared_error
-from sklearn.metrics import r2_score
+from sklearn.metrics import mean_squared_error, max_error, make_scorer, r2_score
 from sklearn.model_selection import RandomizedSearchCV, train_test_split, GridSearchCV, KFold, TimeSeriesSplit
 from sklearn.base import BaseEstimator, RegressorMixin, clone
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 import scipy
 from scipy import stats
-from forecast_model import ForecastModel  
 from data_processor import DataProcessor
 
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning) 
 warnings.simplefilter(action='ignore', category=pd.errors.SettingWithCopyWarning)
+
+experiments = ['1_2_6','2_4_5','3_7_0','5_8_5']

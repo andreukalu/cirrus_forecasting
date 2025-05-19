@@ -1,4 +1,5 @@
 from utilities import *
+from forecast_model import ForecastModel
 
 # Params and flag definition ############################################################################
 
@@ -7,13 +8,22 @@ predict_param = 'TOA'
 hyper_parameter_tuning_flag = False
 temporal_res = 'year'
 
-def main():
+def main(experiment):
+
+    ################## Load the measured/historical data (from 2003 to 2023) #################################
+    data_processor = DataProcessor(predict_param = predict_param, future_data = False, remove_small_samples = False)
+    df_train = data_processor.load_data(file_path = 'df_merged') 
+    df_val = data_processor.load_data(file_path = f'df_merged_val{experiment}') 
+    df_measured = pd.concat([df_train,df_val])
+
+    X_measured, y_measured, t_measured = data_processor.data_filtering_and_feature_engineering(df_measured)
 
     # Load the future CMIP data (from 2013 to 2049) and forecast the target variable #################################
     data_processor = DataProcessor(predict_param = predict_param, future_data = True, remove_small_samples = False)
-    df_future = data_processor.load_data(file_path = 'df_merged_future_future') 
+    df_future = data_processor.load_data(file_path = f'df_merged_val{experiment}_future') 
 
     X_future, _, t_future  = data_processor.data_filtering_and_feature_engineering(df_future)
+    X_future = X_future[X_measured.columns]
 
     # LOAD THE MODELS
     forecast_model = ForecastModel(model_type = model_type, predict_param = predict_param)
@@ -22,14 +32,6 @@ def main():
     #Forecast the target variable
     y_future = forecast_model.model.predict(X_future)
 
-    ################## Load the measured/historical data (from 2003 to 2023) #################################
-    data_processor = DataProcessor(predict_param = predict_param, future_data = False, remove_small_samples = False)
-    df_train = data_processor.load_data(file_path = 'df_merged') 
-    df_val = data_processor.load_data(file_path = 'df_merged_val') 
-    df_measured = pd.concat([df_train,df_val])
-
-    _, y_measured, t_measured = data_processor.data_filtering_and_feature_engineering(df_measured)
-
     ##################### PLOT AND COMPARE THE MEASURED AND FORECASTED TARGET VARIABLE ################
     #Plot the forecasted and measured variables
     p2 = plt.plot(t_measured,y_measured,color='#A2142F',label='Measured')
@@ -37,7 +39,7 @@ def main():
     plt.grid('on')
     plt.ylabel(f'TOA {predict_param} [$W/m^2$]')
     plt.legend()
-    plt.savefig(f'../03Figures/{predict_param}temporal.png',dpi=300)
+    plt.savefig(f'../03Figures/{predict_param}{experiment}temporal.png',dpi=300)
 
     #######################COMPUTE AND PLOT SEN'S SLOPE TREND####################################
     plt.figure(figsize=(10, 6))
@@ -73,10 +75,11 @@ def main():
     plt.grid('on')
     plt.title('Trend of Time Series with Sen\'s Slope')
     plt.xlabel('Year')
-    plt.ylabel(f'TOA {predict_param} yearly mean [W/$m^2$]')
+    plt.ylabel(f'{predict_param} yearly mean [W/$m^2$]')
     plt.legend()
     plt.tight_layout()
-    plt.savefig(f'../03Figures/{predict_param}sensslope.png',dpi=300)
+    plt.savefig(f'../03Figures/{predict_param}{experiment}sensslope.png',dpi=300)
 
 if __name__ == "__main__":
-    main()
+    for experiment in experiments:
+        main(experiment)

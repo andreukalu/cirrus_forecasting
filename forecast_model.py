@@ -4,7 +4,7 @@ from residual_corrector import ResidualCorrector
 
 class ForecastModel:
 #### CLASS INITIALIZATION PARAMETERS ###############################################################################################
-    def __init__(self, predict_param, model_type = 'Residual', weights_flag = False, hyper_parameter_tuning = False):
+    def __init__(self, predict_param, model_type = 'Residual', loss='max_error', weights_flag = False, hyper_parameter_tuning = False):
 
         self.model_type = model_type                    # Model archietcture to be fitted
         self.weights_flag = weights_flag                # Flag for using training weights
@@ -12,6 +12,15 @@ class ForecastModel:
 
         self.model = None                               # ML model to be fitted
         self.hyper_parameter_search_model = None        # Hyper-parameter tuning object
+        
+        if loss == 'combined':                          # Loss used for the training
+            self.loss = make_scorer(combined_loss, greater_is_better=False)
+        elif loss == 'sens':
+            self.loss = make_scorer(sens_loss, greater_is_better=False)
+        elif loss == 'combined_sens':
+            self.loss = make_scorer(combined_sens_loss, greater_is_better=False)
+        else:
+            self.loss = loss                                
 
         self.model_name = predict_param + 'model.pkl'   # Filename of the saved model
 
@@ -42,10 +51,14 @@ class ForecastModel:
                 estimators=[('ridge', ridge),('rf',rf)], 
                 final_estimator=model
             )
-        elif self.model_type == 'Residual':
+        elif self.model_type == 'Residual_GB':
+            base = Ridge(alpha=1.0)
+            residual = GradientBoostingRegressor()
+            print(ResidualCorrector(base_model=base, residual_model=residual))
+            self.model = Pipeline([('scaler',StandardScaler()),('residual_model',ResidualCorrector(base_model=base, residual_model=residual))])
+        elif self.model_type == 'Residual_RF':
             base = Ridge(alpha=1.0)
             residual = RandomForestRegressor()
-            residual = GradientBoostingRegressor()
             print(ResidualCorrector(base_model=base, residual_model=residual))
             self.model = Pipeline([('scaler',StandardScaler()),('residual_model',ResidualCorrector(base_model=base, residual_model=residual))])
 
@@ -81,18 +94,25 @@ class ForecastModel:
             param_grid = {
                 'ridge__alpha': [0.01, 0.1, 0.5, 1, 2, 4, 10,15,20,30,40],
             }
-        elif self.model_type == 'Residual':
+        elif self.model_type == 'Residual_GB':
             param_grid = {
                 'residual_model__residual_model__n_estimators': [2,5,10,20,50,100,200],
                 'residual_model__residual_model__loss': ['squared_error'],
                 'residual_model__residual_model__max_depth': [4,10,20,30,50],
                 'residual_model__residual_model__min_samples_split': [2,10,20,30,40],
                 'residual_model__residual_model__learning_rate': [0.1,0.05,0.025],
-                'residual_model__base_model__alpha': [0.1,1]
+                'residual_model__base_model__alpha': [1,10,20,40,80]
+            }
+        elif self.model_type == 'Residual_RF':
+            param_grid = {
+                'residual_model__residual_model__n_estimators': [2,5,10,20,50,100,200],
+                'residual_model__residual_model__max_depth': [4,10,20,30,50],
+                'residual_model__residual_model__min_samples_split': [2,10,20,30,40],
+                'residual_model__base_model__alpha': [1,10,20,40,80]
             }
         
-        cv = TimeSeriesSplit(n_splits=2)
-        self.hyper_parameter_search_model = GridSearchCV(self.model, param_grid, cv=cv, verbose = 3, scoring='neg_mean_squared_error', n_jobs=-1)
+        cv = TimeSeriesSplit(n_splits=10)
+        self.hyper_parameter_search_model = GridSearchCV(self.model, param_grid, cv=cv, verbose = 3, scoring=self.loss, n_jobs=-1)
 
     # MODEL FITTING OR HYPERPARAMETER TUNING
     def fit(self, X_train, y_train, weights= None):
@@ -243,3 +263,41 @@ class ForecastModel:
                 return f"{name} #{idx+1}"
         else:
             return var_map.get(col.lower(), col.upper())
+
+    def predict(self, X):
+        # Predict using internal model
+        return self.model.predict(X)
+    
+# Define your custom combined loss function
+def combined_loss(y_true, y_pred):
+    alpha = 0.5
+    
+    rmse = mean_squared_error(y_true, y_pred, squared=False)
+    max_err = max_error(y_true, y_pred)
+    return alpha * rmse + (1 - alpha) * max_err
+
+# Sen's slope loss
+def sens_loss(y_true, y_pred):
+    
+    true_slope = sens_slope(y_true)
+    pred_slope = sens_slope(y_pred)
+    return -abs(true_slope - pred_slope)  # Negative to enable maximization
+
+# Sen's slope loss
+def combined_sens_loss(y_true, y_pred):
+    
+    alpha = 0.5
+
+    true_slope = sens_slope(y_true)
+    pred_slope = sens_slope(y_pred)
+    rmse = mean_squared_error(y_true, y_pred, squared=False)
+    sensloss = -abs(true_slope - pred_slope)
+    return alpha * rmse + (1 - alpha) * sensloss   # Negative to enable maximization
+
+def sens_slope(y):
+    if isinstance(y, np.ndarray):
+        y = pd.Series(y)  # Convert to Series for safe indexing
+
+    n = len(y)
+    slopes = [(y.iloc[j] - y.iloc[i]) / (j - i) for i in range(n) for j in range(i + 1, n)]
+    return np.median(slopes)
